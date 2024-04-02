@@ -2,26 +2,31 @@ const DataModels = require("../models/index");
 const { correlation } = require("node-correlation");
 class userSLA {
   async saveUserSlaValue(payload) {
-    await DataModels.userSla.create({ payload });
+    const result = await DataModels.userSla.create({
+      UserName: payload.UserName,
+      work: payload.work,
+      ResourceAvailability: payload.ResourceAvailability,
+      ResourceSuccessRate: payload.ResourceSuccessRate,
+      TurnaroundEfficiency: payload.TurnaroundEfficiency,
+      DataIntegrity: payload.DataIntegrity,
+    });
+    return result;
   }
 
   convertSlaValue(payload) {
-    let {
-      ResourceAvailability,
-      ResourceSuccessRate,
-      TurnaroundEfficiency,
-      DataIntegrity,
-    } = payload;
     let Total =
-      ResourceAvailability +
-      ResourceSuccessRate +
-      TurnaroundEfficiency +
-      DataIntegrity;
-    ResourceAvailability = ResourceAvailability / Total;
-    ResourceSuccessRate = ResourceSuccessRate / Total;
-    TurnaroundEfficiency = TurnaroundEfficiency / Total;
-    DataIntegrity = DataIntegrity / Total;
+      payload.ResourceAvailability +
+      payload.ResourceSuccessRate +
+      payload.TurnaroundEfficiency +
+      payload.DataIntegrity;
+    const ResourceAvailability = payload.ResourceAvailability / Total;
+    const ResourceSuccessRate = payload.ResourceSuccessRate / Total;
+    const TurnaroundEfficiency = payload.TurnaroundEfficiency / Total;
+    const DataIntegrity = payload.DataIntegrity / Total;
+    console.log(ResourceAvailability);
     const response = {
+      UserName: payload.UserName,
+      work: payload.work,
       ResourceAvailability: ResourceAvailability,
       ResourceSuccessRate: ResourceSuccessRate,
       TurnaroundEfficiency: TurnaroundEfficiency,
@@ -30,10 +35,11 @@ class userSLA {
     return response;
   }
   async findUserSlaValue(payload) {
-    return await DataModels.userSla.find({
+    const result = await DataModels.userSla.findOne({
       UserName: payload.UserName,
       work: payload.work,
     });
+    return result;
   }
   async saveUserPreferedCSP(payload) {
     return await DataModels.userPCSP.create({
@@ -42,11 +48,13 @@ class userSLA {
     });
   }
   async returnUserPreferedCSP(payload) {
-    return await DataModels.SLA.findOne({ _id: payload._id });
+    const result = await DataModels.SLA.findOne(payload._id);
+    return result;
   }
 
   async feedbackInput(payload) {
     const {
+      UserName,
       id,
       cloudServiceProvider,
       feedbackValueAv,
@@ -57,17 +65,54 @@ class userSLA {
     const totalNumberofRecords = await DataModels.feedback
       .find({ cloudServiceProvider: cloudServiceProvider })
       .countDocuments();
-    const res = DataModels.feedback.find({
+    const prevFeedbackValue = await DataModels.feedback.find({
       cloudServiceProvider: cloudServiceProvider,
     });
+
     const feedbackArray = [
       feedbackValueAv,
       feedbackValueSR,
       feedbackValueTE,
       feedbackValueDI,
     ];
+    if (totalNumberofRecords == 0) {
+      let currentFeedbackValue =
+        (feedbackValueAv +
+          feedbackValueSR +
+          feedbackValueTE +
+          feedbackValueDI) /
+        40;
+      const userSlaReq = await DataModels.userSla.findOne({ _id: id });
+      const cloudSlaParam = await DataModels.SLA.findOne({
+        cloudServiceProvider: cloudServiceProvider,
+      });
+      const QOS =
+        cloudSlaParam.NResourceAvailability * userSlaReq.ResourceAvailability +
+        cloudSlaParam.NResourceSuccessRate * userSlaReq.ResourceSuccessRate +
+        cloudSlaParam.NTurnaroundEfficiency * userSlaReq.TurnaroundEfficiency +
+        cloudSlaParam.NDataIntegrity * userSlaReq.DataIntegrity;
+      let summation = 0.6 * QOS + 0.4 * currentFeedbackValue;
+      await DataModels.feedback.create({
+        UserName: UserName,
+        cloudServiceProvider: cloudServiceProvider,
+        feedbackValueAv: feedbackValueAv,
+        feedbackValueSR: feedbackValueSR,
+        feedbackValueTE: feedbackValueTE,
+        feedbackValueDI: feedbackValueDI,
+        totalTrustValue: currentFeedbackValue,
+      });
+      const finalResponse = await DataModels.trustValue.create({
+        cloudServiceProvider: cloudServiceProvider,
+        accumulativeTrustValue: summation,
+      });
+      await DataModels.SLA.findOneAndUpdate(
+        { cloudServiceProvider },
+        { trustValue: newTrustValue }
+      );
+      return finalResponse;
+    }
     let positiveValueCorrelationRecords = 0;
-    res.forEach((record) => {
+    for (const record of prevFeedbackValue) {
       let givenFeedBackArray = [
         record.feedbackValueAv,
         record.feedbackValueSR,
@@ -78,7 +123,7 @@ class userSLA {
       if (correlation1 > 0) {
         positiveValueCorrelationRecords = positiveValueCorrelationRecords + 1;
       }
-    });
+    }
     if (positiveValueCorrelationRecords / totalNumberofRecords > 0.5) {
       let currentFeedbackValue =
         (feedbackValueAv +
@@ -86,50 +131,74 @@ class userSLA {
           feedbackValueTE +
           feedbackValueDI) /
         40;
-      const previousFeedbackValue = await DataModels.feedback.aggregate([
+      const aggregationResult = await DataModels.feedback.aggregate([
         {
-          $group: {
-            cloudServiceProvider: cloudServiceProvider,
-            prevFeedbackValue: { $sum: "totalTrustValue" },
+          $match: { cloudServiceProvider: cloudServiceProvider },
+        },
+        {
+          $project: {
+            _id: 0,
+            prevFeedbackValue: { $sum: "$totalTrustValue" },
           },
         },
       ]);
+      console.log(aggregationResult[0].prevFeedbackValue);
       const newFeedbackValue =
         (1 - positiveValueCorrelationRecords / totalNumberofRecords) *
-          previousFeedbackValue.prevTrustValue +
-        currentFeedbackValue;
-      const newPayload = { ...payload, totalTrustValue: newFeedbackValue };
-
-      await DataModels.feedback.create({ newPayload });
-      const resp = await DataModels.userSla.findOne({ _id: id });
-      const resp1 = await DataModels.SLA.findOne({
-        cloudServiceProvider: response.cloudServiceProvider,
+          aggregationResult[0].prevFeedbackValue +
+        (positiveValueCorrelationRecords / totalNumberofRecords) *
+          currentFeedbackValue;
+      console.log(newFeedbackValue);
+      await DataModels.feedback.create({
+        UserName: UserName,
+        cloudServiceProvider: cloudServiceProvider,
+        feedbackValueAv: feedbackValueAv,
+        feedbackValueSR: feedbackValueSR,
+        feedbackValueTE: feedbackValueTE,
+        feedbackValueDI: feedbackValueDI,
+        totalTrustValue: newFeedbackValue,
+      });
+      const userSlaReq = await DataModels.userSla.findOne({ _id: id });
+      const cloudSlaParam = await DataModels.SLA.findOne({
+        cloudServiceProvider: cloudServiceProvider,
       });
       const QOS =
-        resp1.NResourceAvailability * res.ResourceAvailability +
-        resp1.NResourceSuccessRate * res.ResourceSuccessRate +
-        resp1.NTurnaroundEfficiency * res.TurnaroundEfficiency +
-        resp1.NDataIntegrity * res.DataIntegrity;
+        cloudSlaParam.NResourceAvailability * userSlaReq.ResourceAvailability +
+        cloudSlaParam.NResourceSuccessRate * userSlaReq.ResourceSuccessRate +
+        cloudSlaParam.NTurnaroundEfficiency * userSlaReq.TurnaroundEfficiency +
+        cloudSlaParam.NDataIntegrity * userSlaReq.DataIntegrity;
       let summation = 0.6 * QOS + 0.4 * newFeedbackValue;
-      const previousTrustValue = await DataModels.feedback.findOne({
-        cloudServiceProvider: response.cloudServiceProvider,
+      console.log(summation);
+      const previousTrustValue = await DataModels.trustValue.findOne({
+        cloudServiceProvider: cloudServiceProvider,
       });
-      let count = DataModels.trustValue
-        .find({ cloudServiceProvider: response.cloudServiceProvider })
+      let count = await DataModels.trustValue
+        .find({ cloudServiceProvider: cloudServiceProvider })
         .countDocuments();
       count = count + 1;
-      let newTrustValue = (previousTrustValue + summation) / count;
+      console.log(count);
+      console.log(previousTrustValue.accumulativeTrustValue);
+      let newTrustValue =
+        (previousTrustValue.accumulativeTrustValue + summation) / count;
+      console.log(newTrustValue);
       const reply = await DataModels.feedback.findOneAndUpdate(
-        { cloudServiceProvider: response.cloudServiceProvider },
-        { accumulativeTrustValue: newTrustValue },
+        { cloudServiceProvider: cloudServiceProvider },
+        { totalTrustValue: newTrustValue },
         { new: true }
       );
-      DataModels.SLA.findOneAndUpdate(
+      const finalResponse = await DataModels.trustValue.findOneAndUpdate(
+        { cloudServiceProvider: cloudServiceProvider },
+        { accumulativeTrustValue: newTrustValue }
+      );
+      await DataModels.SLA.findOneAndUpdate(
         { cloudServiceProvider },
         { trustValue: newTrustValue }
       );
+      return {
+        reply,
+      };
     }
-    return reply;
+    return { reply: "Feedback value cant be inserted as you are a fake user" };
   }
 }
 

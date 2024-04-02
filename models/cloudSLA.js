@@ -40,10 +40,7 @@ const slaSchema = new mongoose.Schema({
   NDataIntegrity: {
     type: Number,
   },
-  services: {
-    type: String,
-    required: true,
-  },
+
   cost: {
     type: Number,
     required: true,
@@ -54,19 +51,7 @@ const slaSchema = new mongoose.Schema({
     required: true,
     enum: ["Enabled", "Disabled"],
   },
-  memory: {
-    type: Number,
-    required: true,
-    min: 10,
-  },
-  numberOfCpu: {
-    type: Number,
-    min: 1,
-  },
-  cpuSpeed: {
-    type: Number,
-    min: 2,
-  },
+
   trustValue: {
     type: Number,
   },

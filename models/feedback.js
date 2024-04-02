@@ -8,7 +8,6 @@ const feedbackSchema = new mongoose.Schema({
   cloudServiceProvider: {
     type: String,
     required: true,
-    enum: ["aws", "gcp", "azure"],
   },
   feedbackValueAv: {
     type: Number,
