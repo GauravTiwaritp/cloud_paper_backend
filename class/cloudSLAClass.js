@@ -12,13 +12,14 @@ class cloudSLA {
     return response;
   }
   async saveCloudSLAValues(payload) {
-    const result = await DataModels.SLA.save({
+    const result = await DataModels.SLA.create({
+      cloudServiceProvider: payload.cloudServiceProvider,
       ResourceAvailability: payload.ResourceAvailability,
       ResourceSuccessRate: payload.ResourceSuccessRate,
       TurnaroundEfficiency: payload.TurnaroundEfficiency,
       DataIntegrity: payload.DataIntegrity,
-      cost: cost,
-      dataConfidentialityAndIntegrity: dataConfidentialityAndIntegrity,
+      cost: payload.cost,
+      dataConfidentialityAndIntegrity: payload.dataConfidentialityAndIntegrity,
     });
     const res = await converter();
     let NResourceAvailability =
@@ -33,7 +34,7 @@ class cloudSLA {
     let NDataIntegrity =
       (payload.DataIntegrity - res.minDIValue) /
       (res.maxDIValue - res.minDIValue);
-    await DataModels.SLA.findByIdAndUpdate(
+    const result1 = await DataModels.SLA.findByIdAndUpdate(
       { _id: result._id },
       {
         NResourceAvailability,
@@ -42,6 +43,30 @@ class cloudSLA {
         NDataIntegrity,
       }
     );
+    const allSLARecords = await DataModels.SLA.find({});
+
+    for (const record of allSLARecords) {
+      const NResourceAvailability =
+        (record.ResourceAvailability - res.minRAValue) /
+        (res.maxRAValue - res.minRAValue);
+      const NResourceSuccessRate =
+        (record.ResourceSuccessRate - res.minRSValue) /
+        (res.maxRSValue - res.minRSValue);
+      const NTurnaroundEfficiency =
+        (record.TurnaroundEfficiency - res.minTEValue) /
+        (res.maxTEValue - res.minTEValue);
+      const NDataIntegrity =
+        (record.DataIntegrity - res.minDIValue) /
+        (res.maxDIValue - res.minDIValue);
+
+      await DataModels.SLA.findByIdAndUpdate(record._id, {
+        NResourceAvailability,
+        NResourceSuccessRate,
+        NTurnaroundEfficiency,
+        NDataIntegrity,
+      });
+    }
+    return result1;
   }
   async findSLAvalues() {
     return await DataModels.SLA.find({}).sort({ trustValue: 1 });
